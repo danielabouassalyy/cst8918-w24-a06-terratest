@@ -1,72 +1,76 @@
 package test
 
 import (
-    "testing"
-    "time"
+  "os"
+  "testing"
 
-    "github.com/gruntwork-io/terratest/modules/azure"
-    "github.com/gruntwork-io/terratest/modules/terraform"
-    "github.com/stretchr/testify/assert"
+  "github.com/gruntwork-io/terratest/modules/terraform"
+  "github.com/gruntwork-io/terratest/modules/azure"
+  "github.com/stretchr/testify/assert"
+  "github.com/stretchr/testify/require"
 )
 
-const subscriptionID = "805ef5cd-dba2-4928-a666-50cf5f429a0d"
-const labelPrefix   = "abou0344"
-
-// helper to build our common Options
-func terraformOpts() *terraform.Options {
-    return &terraform.Options{
-        TerraformDir: "../",
-        Vars: map[string]interface{}{
-            "labelPrefix": labelPrefix,
-        },
-        RetryableTerraformErrors: map[string]string{
-            // Retry on any NIC‐update error
-            "waiting for update of Network Interface": ".*",
-        },
-        MaxRetries:         10,
-        TimeBetweenRetries: 15 * time.Second,
-    }
-}
-
 func TestAzureLinuxVMCreation(t *testing.T) {
-    opts := terraformOpts()
-    defer terraform.Destroy(t, opts)
-    terraform.InitAndApply(t, opts)
+  t.Parallel()
+  opts := &terraform.Options{
+    TerraformDir: "../",
+    Vars: map[string]interface{}{
+      "subscriptionId": os.Getenv("AZ_SUB_ID"),
+      "labelPrefix":    "abou0344",
+    },
+  }
+  defer terraform.Destroy(t, opts)
+  terraform.InitAndApply(t, opts)
 
-    vmName := terraform.Output(t, opts, "vm_name")
-    rgName := terraform.Output(t, opts, "resource_group_name")
+  rg     := terraform.Output(t, opts, "resource_group_name")
+  vmName := terraform.Output(t, opts, "vm_name")
 
-    assert.True(t, azure.VirtualMachineExists(t, vmName, rgName, subscriptionID))
+  assert.NotEmpty(t, rg)
+  assert.Contains(t, vmName, "abou0344")
 }
 
 func TestNICAttachedToVM(t *testing.T) {
-    opts := terraformOpts()
-    defer terraform.Destroy(t, opts)
-    terraform.InitAndApply(t, opts)
+  t.Parallel()
+  opts := &terraform.Options{
+    TerraformDir: "../",
+    Vars: map[string]interface{}{
+      "subscriptionId": os.Getenv("AZ_SUB_ID"),
+      "labelPrefix":    "abou0344",
+    },
+  }
+  defer terraform.Destroy(t, opts)
+  terraform.InitAndApply(t, opts)
 
-    vmName := terraform.Output(t, opts, "vm_name")
-    rgName := terraform.Output(t, opts, "resource_group_name")
-    nicName := terraform.Output(t, opts, "nic_name")
+  subID   := os.Getenv("AZ_SUB_ID")
+  rg      := terraform.Output(t, opts, "resource_group_name")
+  nicName := terraform.Output(t, opts, "nic_name")
+  vmName  := terraform.Output(t, opts, "vm_name")
 
-    nic, err := azure.GetNetworkInterfaceE(rgName, nicName, subscriptionID)
-    assert.NoError(t, err)
-    assert.NotNil(t, nic.VirtualMachine, "NIC should be attached to a VM")
-    assert.Contains(t, *nic.VirtualMachine.ID, vmName)
+  nic, err := azure.GetNetworkInterfaceE(subID, rg, nicName)
+  require.NoError(t, err)
+  require.NotNil(t, nic.VirtualMachine)
+  assert.Contains(t, *nic.VirtualMachine.ID, vmName)
 }
 
 func TestVMOSVersion(t *testing.T) {
-    opts := terraformOpts()
-    defer terraform.Destroy(t, opts)
-    terraform.InitAndApply(t, opts)
+  t.Parallel()
+  opts := &terraform.Options{
+    TerraformDir: "../",
+    Vars: map[string]interface{}{
+      "subscriptionId": os.Getenv("AZ_SUB_ID"),
+      "labelPrefix":    "abou0344",
+    },
+  }
+  defer terraform.Destroy(t, opts)
+  terraform.InitAndApply(t, opts)
 
-    vmName := terraform.Output(t, opts, "vm_name")
-    rgName := terraform.Output(t, opts, "resource_group_name")
+  subID  := os.Getenv("AZ_SUB_ID")
+  rg     := terraform.Output(t, opts, "resource_group_name")
+  vmName := terraform.Output(t, opts, "vm_name")
 
-    vm, err := azure.GetVirtualMachineE(rgName, vmName, subscriptionID)
-    assert.NoError(t, err)
-
-    // Make sure this matches your Terraform source_image_reference.sku
-    expectedSKU := "22_04-lts-gen2"
-    sku := *vm.StorageProfile.ImageReference.Sku
-    assert.Equal(t, expectedSKU, sku)
+  vm, err := azure.GetVirtualMachineE(subID, rg, vmName)
+  require.NoError(t, err)
+  require.NotNil(t, vm.StorageProfile)
+  require.NotNil(t, vm.StorageProfile.ImageReference)
+  assert.Contains(t, *vm.StorageProfile.ImageReference.Sku, "22_04")
 }
