@@ -1,36 +1,72 @@
 package test
 
 import (
-	"testing"
+    "testing"
+    "time"
 
-	"github.com/gruntwork-io/terratest/modules/azure"
-	"github.com/gruntwork-io/terratest/modules/terraform"
-	"github.com/stretchr/testify/assert"
+    "github.com/gruntwork-io/terratest/modules/azure"
+    "github.com/gruntwork-io/terratest/modules/terraform"
+    "github.com/stretchr/testify/assert"
 )
 
-// You normally want to run this under a separate "Testing" subscription
-// For lab purposes you will use your assigned subscription under the Cloud Dev/Ops program tenant
-var subscriptionID string = "<your-azure-subscription-id"
+const subscriptionID = "805ef5cd-dba2-4928-a666-50cf5f429a0d"
+const labelPrefix   = "abou0344"
+
+// helper to build our common Options
+func terraformOpts() *terraform.Options {
+    return &terraform.Options{
+        TerraformDir: "../",
+        Vars: map[string]interface{}{
+            "labelPrefix": labelPrefix,
+        },
+        RetryableTerraformErrors: map[string]string{
+            // Retry on any NIC‐update error
+            "waiting for update of Network Interface": ".*",
+        },
+        MaxRetries:         10,
+        TimeBetweenRetries: 15 * time.Second,
+    }
+}
 
 func TestAzureLinuxVMCreation(t *testing.T) {
-	terraformOptions := &terraform.Options{
-		// The path to where our Terraform code is located
-		TerraformDir: "../",
-		// Override the default terraform variables
-		Vars: map[string]interface{}{
-			"labelPrefix": "<your-college-id>",
-		},
-	}
+    opts := terraformOpts()
+    defer terraform.Destroy(t, opts)
+    terraform.InitAndApply(t, opts)
 
-	defer terraform.Destroy(t, terraformOptions)
+    vmName := terraform.Output(t, opts, "vm_name")
+    rgName := terraform.Output(t, opts, "resource_group_name")
 
-	// Run `terraform init` and `terraform apply`. Fail the test if there are any errors.
-	terraform.InitAndApply(t, terraformOptions)
+    assert.True(t, azure.VirtualMachineExists(t, vmName, rgName, subscriptionID))
+}
 
-	// Run `terraform output` to get the value of output variable
-	vmName := terraform.Output(t, terraformOptions, "vm_name")
-	resourceGroupName := terraform.Output(t, terraformOptions, "resource_group_name")
+func TestNICAttachedToVM(t *testing.T) {
+    opts := terraformOpts()
+    defer terraform.Destroy(t, opts)
+    terraform.InitAndApply(t, opts)
 
-	// Confirm VM exists
-	assert.True(t, azure.VirtualMachineExists(t, vmName, resourceGroupName, subscriptionID))
+    vmName := terraform.Output(t, opts, "vm_name")
+    rgName := terraform.Output(t, opts, "resource_group_name")
+    nicName := terraform.Output(t, opts, "nic_name")
+
+    nic, err := azure.GetNetworkInterfaceE(rgName, nicName, subscriptionID)
+    assert.NoError(t, err)
+    assert.NotNil(t, nic.VirtualMachine, "NIC should be attached to a VM")
+    assert.Contains(t, *nic.VirtualMachine.ID, vmName)
+}
+
+func TestVMOSVersion(t *testing.T) {
+    opts := terraformOpts()
+    defer terraform.Destroy(t, opts)
+    terraform.InitAndApply(t, opts)
+
+    vmName := terraform.Output(t, opts, "vm_name")
+    rgName := terraform.Output(t, opts, "resource_group_name")
+
+    vm, err := azure.GetVirtualMachineE(rgName, vmName, subscriptionID)
+    assert.NoError(t, err)
+
+    // Make sure this matches your Terraform source_image_reference.sku
+    expectedSKU := "22_04-lts-gen2"
+    sku := *vm.StorageProfile.ImageReference.Sku
+    assert.Equal(t, expectedSKU, sku)
 }
